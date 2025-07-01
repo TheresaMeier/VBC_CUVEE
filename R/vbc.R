@@ -41,7 +41,7 @@
 #'   discrete integer variables, or one of zi, zinfl, zero-inflated for
 #'   zero-inflated variables.
 #'
-#' @param time_mp [numeric]\cr
+#' @param time_p [numeric]\cr
 #' Time vector of the projection period attached to the returned object as a 
 #' column. Defaults to `NA`, which means no time vector is attached.
 #'
@@ -75,36 +75,87 @@
 #' @import rvinecopulib
 #' @import kde1d
 #' @import data.table
+#' @import mgcv
 #' @export
-vbc <- function(mp, mc, rc, var_names = colnames(rc), margins_controls = list(
-  mult = NULL, xmin = NaN, xmax = NaN, bw = NA, deg = 2, type = "c"
-), time_mp = NA, ...) {
+#' 
+
+vbc_new <- function(mp, mc, rc, var_names = colnames(rc), 
+                margins_controls = list(
+                  mult = NULL, xmin = NaN, xmax = NaN, bw = NA, deg = 2, type = "c"), 
+                time_c,   # time vector of calibration period
+                time_p,   # time vector of projection period
+                locs,     # df of Lon and Lat values + Id for each location
+                nrows, ncols, 
+                direction = c("loc-var", "var-loc"),
+                fixed = TRUE,             # Indicator if fixed local level is assumed or not
+                mask = TRUE,
+                bridge_var = NULL, 
+                seed = 123, cores = 1,
+                ...) 
+  {
   check_vbc_args(mp, mc, rc, var_names)
-  if(!is.data.frame(mp) & is.list(mp)) {
-    return(vbc_ensemble(mp, mc, rc, var_names, margins_controls, time_mp, ...))
-  }
-  mc_kde <- attr(estimate_margins(mc, margins_controls), "kde")
-  mpu <- model_vine(mp, margins_controls, ...)
-  rcu <- model_vine(rc, margins_controls, ...)
+
+  # Step 1: GAM decomposition
+  vars_unique = unique(sub("\\..*$", "", var_names))
+  gam_fit = get_GAM_decomposition(mp, mc, rc, locs, time_c, time_p, vars_unique)
+
+  # Step 2: Get margins of mc
+  remainder_cols <- grep("remainder", colnames(gam_fit$mc), value = TRUE)
+  mc_kde <- attr(estimate_margins(gam_fit$mc[remainder_cols], margins_controls), "kde")
+  
+  # Step 3: Get vine structure for mp and rc
+  mpu <- model_vine(gam_fit$mp[remainder_cols], margins_controls = margins_controls, 
+                    nrows = nrows, ncols = ncols, nvars = length(vars_unique),
+                    direction = direction,
+                    fixed = fixed,            
+                    mask = mask,
+                    bridge_var = bridge_var, 
+                    seed = seed, cores = cores,
+                    ...)
+  
+  rcu <- model_vine(data = gam_fit$rc[remainder_cols], margins_controls = margins_controls, 
+                    nrows = nrows, ncols = ncols, nvars = length(vars_unique),
+                    direction = direction,
+                    fixed = fixed,            
+                    mask = mask,
+                    bridge_var = bridge_var, 
+                    seed = seed, cores = cores,
+                    ...)
+  
   attr(rcu, "vine")$var_types = rep("c", times = ncol(mp))
+  
+  # Step 4: Correct remainder of mp
   x_mph <- correct_rosenblatt(mpu, rcu)
+  
   xmin = if(length(margins_controls$xmin) != ncol(rc)) {
     rep(NA, times = ncol(rc))
   } else {
     margins_controls$xmin
   }
-  xproj <- mapply(map_delta, mp = mp, mph = data.frame(x_mph),
+  
+  # Step 5: Apply delta mapping to keep climate change signal
+  xproj_tmp <- mapply(map_delta, mp = gam_fit$mp[remainder_cols], mph = data.frame(x_mph),
                   mp_kde = attr(mpu, "kde"), mc_kde = mc_kde, xmin = xmin,
                   SIMPLIFY = TRUE)
-  xproj <- data.table(xproj)
-  colnames(xproj) <- var_names
+  xproj_tmp <- data.table(xproj_tmp)
+  colnames(xproj_tmp) <- var_names
+  
+  # Step 6: Put back seasonality on the data
+  xproj <- xproj_tmp %>%
+    mutate(across(
+      .cols = where(is.numeric),
+      .fns = ~ . + gam_fit$seasonality_rc[[cur_column()]] + gam_fit$seasonality_delta[[cur_column()]]
+    ))
+  
+  
+  # Step 7: Wrap it all up to generate sound output
   attr(xproj, "vine_rc") <- attr(rcu, "vine")
   attr(xproj, "kde_rc") <- attr(rcu, "kde")
   attr(xproj, "vine_mp") <- attr(mpu, "vine")
   attr(xproj, "kde_mp") <- attr(mpu, "kde")
   class(xproj) <- c("vbc", class(xproj))
-  if(!is.na(time_mp)) {
-    xproj[, "time" := time_mp]
+  if(!all(is.na(time_p))) {
+    xproj[, "time" := time_p]
   }
   xproj
 }
@@ -133,39 +184,4 @@ check_vbc_args <- function(mp, mc, rc, var_names) {
                    len = ncol(mp))
 }
 
-#' @title Correction by VBC for model ensembles
-#' 
-#' @inheritParams vbc
-#' 
-#' @return [list]\cr
-#' A list of corrected data frames for each member of the model ensemble.
-#' 
-vbc_ensemble <- function(mp, mc, rc, var_names, margins_controls, time_mp, ...) {
-  mc_kde <- attr(estimate_margins(mc, margins_controls), "kde")
-  rcu <- model_vine(rc, margins_controls, ...)
-  attr(rcu, "vine")$var_types = rep("c", times = ncol(rc))
-  lapply(mp, function(member){
-    mpu <- model_vine(member, margins_controls, ...)
-    x_mph <- correct_rosenblatt(mpu, rcu)
-    xmin = if(length(margins_controls$xmin) != ncol(rc)) {
-      rep(NA, times = ncol(rc))
-    } else {
-      margins_controls$xmin
-    }
-    xproj <- mapply(map_delta, mp = member, mph = data.frame(x_mph),
-                    mp_kde = attr(mpu, "kde"), mc_kde = mc_kde, xmin = xmin,
-                    SIMPLIFY = TRUE)
-    xproj <- data.table(xproj)
-    colnames(xproj) <- var_names
-    attr(xproj, "vine_rc") <- attr(rcu, "vine")
-    attr(xproj, "kde_rc") <- attr(rcu, "kde")
-    attr(xproj, "vine_mp") <- attr(mpu, "vine")
-    attr(xproj, "kde_mp") <- attr(mpu, "kde")
-    class(xproj) <- c("vbc", class(xproj))
-    if(!is.na(time_mp)) {
-      xproj[, "time" := time_mp]
-    }
-    message("An ensemble member is done.")
-    xproj
-  })  
-}
+

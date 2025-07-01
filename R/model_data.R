@@ -12,7 +12,11 @@
 #' @return The PIT-transformed margins from [estimate_margins()]. Additionally
 #' the data frame contains the attribute `vine` with the vine copula model and
 #' the attribute `kde` with the kernel density estimation of the data.
-model_vine <- function(data, margins_controls, ...) {
+model_vine <- function(data, margins_controls, 
+                       nrows, ncols, nvars,
+                       direction, fixed, mask, 
+                       bridge_var, seed, cores,
+                       ...) {
   u_data <- estimate_margins(data, margins_controls)
   if (any(margins_controls$type == "zi")) {
     vec <- which(rep(margins_controls$type, times = 2) == "zi")
@@ -21,7 +25,21 @@ model_vine <- function(data, margins_controls, ...) {
     u_data <- pseudo_obs(u_data, ties_method = 'random')
   }
   var_types <- ifelse(margins_controls$type == "zi", "d", "c")
-  vine_model <- vinecop(u_data, var_types = var_types, ...)
-  attr(u_data, "vine") <- vine_model
+
+  # New: derive hierarchical vine by CUVEE
+  vine_model = get_nested_vine(
+    data, nrows = nrows, ncols = ncols, nvars = nvars,
+    direction = direction,
+    fixed = fixed,            
+    mask = mask,
+    bridge_var = bridge_var,
+    fit_levels = FALSE,
+    fit_final = TRUE,
+    location_vine = "dissman",
+    variable_vine = "dissman",
+    seed = seed, cores = cores) 
+  
+  # vine_model <- vinecop(u_data, var_types = var_types, ...)
+  attr(u_data, "vine") <- vine_model$vine_level3
   u_data
 }
