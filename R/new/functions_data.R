@@ -1,7 +1,6 @@
 # Functions for data set manipulation and data sampling
 
 reorder_dataset = function(data, direction = c("variable-major", "location-major"), order = NULL){
-  
   # Extract variable names and location numbers
   var_names <- unique(sub("\\.\\d+$", "", colnames(data)))  # Extract Variables
   
@@ -18,7 +17,7 @@ reorder_dataset = function(data, direction = c("variable-major", "location-major
   }
   
   # Reorder dataset
-  return(data[, new_order])
+  return(data.frame(data)[, new_order])
 }
 
 create_simulation_data = function(nlocs, nvars, nsample, seed = 1, method = c("indep", "random", "given"), cov_mat = NULL){

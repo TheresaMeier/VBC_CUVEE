@@ -24,11 +24,11 @@ get_nested_vine <- function(
   
   if (direction == "var-loc"){          # original
     
-    # Ensure the correct ordering of the data set
-    colnames_tmp = colnames(data)
-    data = reorder_dataset(data, direction = "location-major")
-
-    if (any(colnames_tmp != colnames(data))) print("Warning: Dataset is reordered to 'location-major' format.")
+    # # Ensure the correct ordering of the data set
+    # colnames_tmp = colnames(data)
+    # data = reorder_dataset(data, direction = "location-major")
+    # 
+    # if (any(colnames_tmp != colnames(data))) print("Warning: Dataset is reordered to 'location-major' format.")
 
     output = nested_vine_var_loc(data, nrows, ncols, nvars,
                                  mask, bridge_var, fixed,
@@ -38,12 +38,12 @@ get_nested_vine <- function(
     
   } else if (direction == "loc-var"){       # inverse
     
-    # Ensure the correct ordering of the data set
-    colnames_tmp = colnames(data)
-    data = reorder_dataset(data, direction = "variable-major")
-    
-    if (any(colnames_tmp != colnames(data))) print("Warning: Dataset is reordered to 'variable-major' format.")
-    
+    # # Ensure the correct ordering of the data set
+    # colnames_tmp = colnames(data)
+    # data = reorder_dataset(data, direction = "variable-major")
+    # 
+    # if (any(colnames_tmp != colnames(data))) print("Warning: Dataset is reordered to 'variable-major' format.")
+    # 
     output = nested_vine_loc_var(data, nrows, ncols, nvars,
                                  mask, bridge_var, fixed,
                                  fit_levels, fit_final,
@@ -69,7 +69,7 @@ nested_vine_var_loc = function(data, nrows, ncols, nvars,
   
   d <- ncol(data)
   nlocs = nrows * ncols
-  
+
   # Sample a bridging variable
   if (is.null(bridge_var)) {
     bridge_var = sample(1:nvars, 1)
@@ -96,7 +96,7 @@ nested_vine_var_loc = function(data, nrows, ncols, nvars,
       tree <- mst(g)
       rvs_level1 <- spanning_tree_to_rvine_structure(tree)
       
-      vine_level1_tmp = vinecop(pseudo_obs(data[, seq(bridge_var, ncol(data), nvars)]), trunc_lvl = 1,
+      vine_level1_tmp = vinecop(pseudo_obs(data[, ((bridge_var-1)*nlocs+1):((bridge_var-1)*nlocs+nlocs)]), trunc_lvl = 1,
                                 family_set = "tll", structure = rvs_level1, cores = cores)
       
     } else {
@@ -115,11 +115,11 @@ nested_vine_var_loc = function(data, nrows, ncols, nvars,
       tree <- sample_tree_wilson(g, seed)
       rvs_level1 <- spanning_tree_to_rvine_structure(tree)
       
-      vine_level1_tmp = vinecop(pseudo_obs(data[, seq(bridge_var, ncol(data), nvars)]), trunc_lvl = 1,
+      vine_level1_tmp = vinecop(pseudo_obs(data[, ((bridge_var-1)*nlocs+1):((bridge_var-1)*nlocs+nlocs)]), trunc_lvl = 1,
                                 family_set = "tll", structure = rvs_level1, cores = cores, tree_algorithm = "random_weighted")
       
     } else {
-      vine_level1_tmp = vinecop(pseudo_obs(data[, seq(bridge_var, ncol(data), nvars)]), trunc_lvl = 1,
+      vine_level1_tmp = vinecop(pseudo_obs(data[, ((bridge_var-1)*nlocs+1):((bridge_var-1)*nlocs+nlocs)]), trunc_lvl = 1,
                                 family_set = "tll", cores = cores, tree_algorithm = "random_weighted")
     }
   }
@@ -131,7 +131,7 @@ nested_vine_var_loc = function(data, nrows, ncols, nvars,
   
   if (fit_levels) {
     # Find the vine based on the matching variable
-    vine_level1 = vinecop(pseudo_obs(data[, seq(bridge_var, ncol(data), nvars)]), 
+    vine_level1 = vinecop(pseudo_obs(data[, ((bridge_var-1)*nlocs+1):((bridge_var-1)*nlocs+nlocs)]), 
                           family_set = "tll", trunc_lvl = 1,
                           structure = rvs_level1, cores = cores)  
     
@@ -152,7 +152,7 @@ nested_vine_var_loc = function(data, nrows, ncols, nvars,
     loc = sample(1:nlocs,1)
     
     # Fit the vine to that location
-    vine_level2 =  vinecop(pseudo_obs(data[, seq(loc + (loc-1) * (nvars-1), loc + loc * (nvars-1))]), 
+    vine_level2 =  vinecop(pseudo_obs(data[, seq(loc, nlocs*nvars, by = nlocs)]), 
                            family_set = "tll", cores = cores, tree_algorithm = tree_alg, trunc_lvl = 1) 
     
     rvs_level2 = vine_level2$structure
@@ -163,7 +163,7 @@ nested_vine_var_loc = function(data, nrows, ncols, nvars,
     
     for (iLoc in 1:nlocs){
       # Fit the vine to each location separately
-      vine_level2_iLoc =  vinecop(pseudo_obs(data[, seq(iLoc + (iLoc-1) * (nvars-1), iLoc + iLoc * (nvars-1))]), 
+      vine_level2_iLoc =  vinecop(pseudo_obs(data[, seq(iLoc, nlocs*nvars, by = nlocs)]), 
                              family_set = "tll", cores = cores, tree_algorithm = tree_alg, trunc_lvl = 1) 
       
       output[[paste0("vine_level2_loc", iLoc)]] = vine_level2_iLoc
@@ -197,7 +197,7 @@ nested_vine_var_loc = function(data, nrows, ncols, nvars,
   if (fit_final) {
     
     # Fit the corresponding R vine
-    vine_level3 <- vinecop(pseudo_obs(data),
+    vine_level3 <- vinecop(pseudo_obs(reorder_dataset(data, direction = "location-major")),
                            family_set = "tll", trunc_lvl = 1,
                            structure = rvs_level3, cores = cores)
     

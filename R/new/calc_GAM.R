@@ -1,4 +1,11 @@
-get_GAM_decomposition = function(mp, mc, rc, locs, time_c, time_p, var_names) {
+
+
+
+get_GAM_decomposition = function(mp, mc, rc, 
+                                 locs, 
+                                 time_c, time_p,
+                                 var_names,
+                                 families = NULL) {
   
   # Step 1: Transform inputs to wide format tibbles for mc, mp, rc
   dfs <- list(
@@ -10,14 +17,14 @@ get_GAM_decomposition = function(mp, mc, rc, locs, time_c, time_p, var_names) {
   # Step 2: Fit GAM models for each variable on each dataset
   gam_list <- map(dfs, function(df) {
     map(set_names(var_names), function(var) {
-      select_best_gam(var, df)
+      select_best_gam(var, df, families)
     })
   })
   
   # Step 3: Add seasonality and remainder columns to each dataset
   dfs <- map2(dfs, gam_list, function(df, fit_list) {
     for (var in names(fit_list)) {
-      preds <- predict(fit_list[[var]])
+      preds <- predict(fit_list[[var]], type = "response")
       df[[paste0("seasonality_", var)]] <- preds
       df[[paste0("remainder_", var)]] <- df[[var]] - preds
     }
@@ -37,10 +44,10 @@ get_GAM_decomposition = function(mp, mc, rc, locs, time_c, time_p, var_names) {
   
   for (var in var_names) {
     # Predict seasonality on mp data using rc fit
-    seasonality_rc[[var]] <- predict(gam_list$rc[[var]], newdata = dfs$mp)
+    seasonality_rc[[var]] <- predict(gam_list$rc[[var]], newdata = dfs$mp, type = "response")
     
     # Predict seasonality on mp data using mc fit
-    seasonality_mc[[var]] <- predict(gam_list$mc[[var]], newdata = dfs$mp)
+    seasonality_mc[[var]] <- predict(gam_list$mc[[var]], newdata = dfs$mp, type = "response")
     
     # Calculate delta = mp seasonality (original) - predicted mc seasonality
     seasonality_delta[[var]] <- dfs$mp[[paste0("seasonality_", var)]] - seasonality_mc[[var]]
@@ -58,9 +65,6 @@ get_GAM_decomposition = function(mp, mc, rc, locs, time_c, time_p, var_names) {
   # Step 6: Add these new seasonality dataframes to dfs list before pivoting wider
   dfs[["seasonality_rc"]] <- seasonality_rc_df
   dfs[["seasonality_delta"]] <- seasonality_delta_df
-  
-  ## For now: filter for fist location
-  # dfs <- map(dfs, ~ filter(.x, Id == 1))
   
   # Step 7: Transform all dfs back to wide format (including new seasonality ones)
   dfs_wide <- map(dfs, function(df) {
@@ -135,12 +139,7 @@ suggest_families <- function(var, df) {
   } else if (!is_non_negative) {
     return(list(gaussian = gaussian()))
   } else if (has_zeros) {
-    tweedie <- statmod::tweedie()
-    tweedie$link <- "log"
-    tweedie$linkfun <- log
-    tweedie$linkinv <- exp
-    tweedie$mu.eta <- function(eta) exp(eta)
-    return(list(tweedie = tweedie))
+    return(list(tweedie = tw(link = "log")))
   } else if (is_bounded_01) {
     return(list(betar = mgcv::betar()))
   } else if (is_positive && skewness_val > 1) {
@@ -155,13 +154,18 @@ suggest_families <- function(var, df) {
 
 
 # Function to fit the best GAM model based on AIC
-select_best_gam <- function(var, df) {
-  families_to_try <- suggest_families(var, df)
-  message(sprintf(
-    "Families to try for variable %s: %s", 
-    var, 
-    paste(names(families_to_try), collapse = ", ")
-  ))
+select_best_gam <- function(var, df, families) {
+  
+  if (is.null(families)){
+    families_to_try <- suggest_families(var, df)
+    message(sprintf(
+      "Families to try for variable %s: %s", 
+      var, 
+      paste(names(families_to_try), collapse = ", ")
+    ))
+  } else {
+    families_to_try = families[[var]]
+  }
   
   models <- purrr::imap(families_to_try, function(fam, fam_name) {
     

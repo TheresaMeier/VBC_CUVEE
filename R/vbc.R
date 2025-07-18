@@ -86,6 +86,7 @@ vbc_new <- function(mp, mc, rc, var_names = colnames(rc),
                 time_p,   # time vector of projection period
                 locs,     # df of Lon and Lat values + Id for each location
                 nrows, ncols, 
+                families = NULL, 
                 direction = c("loc-var", "var-loc"),
                 fixed = TRUE,             # Indicator if fixed local level is assumed or not
                 mask = TRUE,
@@ -93,12 +94,58 @@ vbc_new <- function(mp, mc, rc, var_names = colnames(rc),
                 seed = 123, cores = 1,
                 ...) 
   {
+  # Reorder data sets
+  if (direction == "var-loc"){          # original
+    
+    # Ensure the correct ordering of the data set
+    colnames_tmp = colnames(mp)
+    mp = reorder_dataset(mp, direction = "location-major")
+    mc = reorder_dataset(mc, direction = "location-major")
+    rc = reorder_dataset(rc, direction = "location-major")
+    
+    if (any(colnames_tmp != colnames(mp))) {
+      print("Warning: Dataset is reordered to 'location-major' format.")
+      
+      # Reorder margins_controls accordingly
+      idx <- match(colnames(mp), colnames_tmp)
+      margins_controls = lapply(margins_controls, function(x) x[idx])
+      var_names = colnames(mp)
+    }
+    
+  } else if (direction == "loc-var"){       # inverse
+    
+    # Ensure the correct ordering of the data set
+    colnames_tmp = colnames(mp)
+    mp = reorder_dataset(mp, direction = "variable-major")
+    mc = reorder_dataset(mc, direction = "variable-major")
+    rc = reorder_dataset(rc, direction = "variable-major")
+    
+    if (any(colnames_tmp != colnames(mp))){
+      print("Warning: Dataset is reordered to 'variable-major' format.")
+      
+      # Reorder margins_controls accordingly
+      idx <- match(colnames(mp), colnames_tmp)
+      margins_controls = lapply(margins_controls, function(x) x[idx])
+      var_names = var_names[idx]
+    }
+  }
+  
   check_vbc_args(mp, mc, rc, var_names)
-
+  
   # Step 1: GAM decomposition
   vars_unique = unique(sub("\\..*$", "", var_names))
-  gam_fit = get_GAM_decomposition(mp, mc, rc, locs, time_c, time_p, vars_unique)
-
+  gam_fit = get_GAM_decomposition(mp, mc, rc, locs, time_c, time_p, vars_unique, families)
+  
+  # Reorder if option var-loc is chosen
+  if (direction == "var-loc") {
+    gam_fit = setNames(
+      lapply(names(gam_fit), function(i) {
+        reorder_dataset(gam_fit[[i]], direction = "location-major")
+      }),
+      names(gam_fit)
+    )
+  }
+  
   # Step 2: Get margins of mc
   remainder_cols <- grep("remainder", colnames(gam_fit$mc), value = TRUE)
   mc_kde <- attr(estimate_margins(gam_fit$mc[remainder_cols], margins_controls), "kde")
@@ -157,7 +204,7 @@ vbc_new <- function(mp, mc, rc, var_names = colnames(rc),
   if(!all(is.na(time_p))) {
     xproj[, "time" := time_p]
   }
-  xproj
+  list("corrected_mp" = xproj, "rvine_mp" = attr(mpu, "vine"), "rvine_rc" = attr(rcu, "vine"))
 }
 
 # utils ------------------------------------------------------------------------

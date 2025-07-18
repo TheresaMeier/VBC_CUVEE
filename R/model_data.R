@@ -17,6 +17,7 @@ model_vine <- function(data, margins_controls,
                        direction, fixed, mask, 
                        bridge_var, seed, cores,
                        ...) {
+  
   u_data <- estimate_margins(data, margins_controls)
   if (any(margins_controls$type == "zi")) {
     vec <- which(rep(margins_controls$type, times = 2) == "zi")
